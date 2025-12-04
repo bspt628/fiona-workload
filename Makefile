@@ -19,7 +19,10 @@ applications = \
 	nn_conv			\
 	nn_pad			\
 	nn_pool			\
-	mlp_iris
+	mlp_iris		\
+	mlp_iris_train	\
+	elm_iris		\
+	test_relu
 
 #--------------------------------------------------------------------
 # Build rules

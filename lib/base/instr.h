@@ -15,9 +15,10 @@
 #define MAX_V(rd, v1)           { ROCC_INSTRUCTION_R_I_I(0, rd, v1, 0, 0x0B, 10); }
 #define MIN_V(rd, v1)           { ROCC_INSTRUCTION_R_I_I(0, rd, v1, 1, 0x0B, 10); }
 
-#define PRELU_V(vd, r1, v2)     { ROCC_INSTRUCTION_I_R_I(0, vd, r1, v2, 0x0F, 10); }
-#define TANH_V(vd, v1)          { ROCC_INSTRUCTION_I_I_I(0, vd, v1, 1, 0x0F); }
-#define SIGMOID_V(vd, v1)       { ROCC_INSTRUCTION_I_I_I(0, vd, v1, 2, 0x0F); }
+#define RELU_V(vd, v1)          { ROCC_INSTRUCTION_I_I_I(0, vd, v1, 0, 0x07); }
+#define PRELU_V(vd, r1, v2)     { ROCC_INSTRUCTION_I_R_I(0, vd, r1, v2, 0x07, 10); }
+#define TANH_V(vd, v1)          { ROCC_INSTRUCTION_I_I_I(0, vd, v1, 1, 0x07); }
+#define SIGMOID_V(vd, v1)       { ROCC_INSTRUCTION_I_I_I(0, vd, v1, 2, 0x07); }
 
 #define LOAD_V(vregnum, src)    { ROCC_INSTRUCTION_I_R_I(0, vregnum, src, 0, 8, 10); }
 #define STORE_V(vregnum, dst)   { ROCC_INSTRUCTION_I_R_I(0, 0, dst, vregnum, 9, 10); }

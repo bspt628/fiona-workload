@@ -21,11 +21,55 @@ int main() {
     elem_t y_fc1[batch_size][num_hidden];
     nn_linear(&y_fc1[0][0], &mlp_fc1_weight[0][0], &iris_test_X[0][0], num_in, num_hidden, batch_size);
 
+    // Debug: Print first 2 samples of FC1 output
+    printf("[debug] FC1 output (first 2 samples):\n");
+    for(size_t i = 0; i < 2 && i < batch_size; ++i) {
+        printf("  Sample %d: [", i);
+        for(size_t j = 0; j < num_hidden; ++j) {
+            printf("%d", y_fc1[i][j]);
+            if(j < num_hidden - 1) printf(", ");
+        }
+        printf("]\n");
+    }
+
     elem_t y_relu[batch_size][num_hidden];
+
+    // Debug: Print input pointer addresses
+    printf("[debug] Before ReLU: y_fc1 address = %p, y_relu address = %p\n", (void*)&y_fc1[0][0], (void*)&y_relu[0][0]);
+    printf("[debug] y_fc1[0] (first 10): [");
+    for(size_t j = 0; j < num_hidden; ++j) {
+        printf("%d", y_fc1[0][j]);
+        if(j < num_hidden - 1) printf(", ");
+    }
+    printf("]\n");
+    printf("[debug] y_fc1[1] (first 10): [");
+    for(size_t j = 0; j < num_hidden; ++j) {
+        printf("%d", y_fc1[1][j]);
+        if(j < num_hidden - 1) printf(", ");
+    }
+    printf("]\n");
+
     tiled_matrix_relu(&y_relu[0][0], &y_fc1[0][0], batch_size, num_hidden);
+
+    // Debug: Print first 2 samples of ReLU output
+    printf("[debug] ReLU output (first 2 samples):\n");
+    for(size_t i = 0; i < 2 && i < batch_size; ++i) {
+        printf("  Sample %d: [", i);
+        for(size_t j = 0; j < num_hidden; ++j) {
+            printf("%d", y_relu[i][j]);
+            if(j < num_hidden - 1) printf(", ");
+        }
+        printf("]\n");
+    }
 
     elem_t y_fc2[batch_size][num_out];
     nn_linear(&y_fc2[0][0], &mlp_fc2_weight[0][0], &y_relu[0][0], num_hidden, num_out, batch_size);
+
+    // Debug: Print first 5 samples of FC2 output
+    printf("[debug] FC2 output (first 5 samples):\n");
+    for(size_t i = 0; i < 5 && i < batch_size; ++i) {
+        printf("  Sample %d: [%d, %d, %d]\n", i, y_fc2[i][0], y_fc2[i][1], y_fc2[i][2]);
+    }
 
     elem_t y_pred[batch_size];
     matrix_vector_argmax(y_pred, &y_fc2[0][0], batch_size, num_out);

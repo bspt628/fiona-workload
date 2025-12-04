@@ -18,9 +18,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 
-#include "fiona_utils.h"
-#include "fiona_nn.h"
-#include "fiona_instr.h"
+#include "fiona.h"
+#include "utils/pprint.h"
 
 // ============================================================
 // Configuration

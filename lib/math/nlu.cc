@@ -6,7 +6,7 @@ void fit_vector_relu(elem_t *retval, const elem_t *vec, size_t vlen) {
     assert(vlen <= EU_VEC_ELEM);
     SET_VLEN(vlen);
     LOAD_V(1, vec);
-    PRELU_V(2, 0, 1);
+    RELU_V(2, 1);
     STORE_V(2, retval);
 }
 

@@ -21,6 +21,7 @@ applications = \
 	nn_pool			\
 	mlp_iris		\
 	mlp_iris_train	\
+	mlp_iris_infer	\
 	elm_iris		\
 	test_relu
 

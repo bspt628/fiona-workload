@@ -1,9 +1,13 @@
 /**
- * @file main.cc
- * @brief MLP Training on Iris Dataset with Backpropagation
+ * @file train_mlp_host.cc
+ * @brief Host-side MLP Training for Iris Dataset
  *
- * Implements basic backpropagation using floating-point arithmetic
- * for stability. Demonstrates on-device training capability.
+ * Trains an MLP on the host machine and outputs:
+ * 1. Binary weight file (mlp_iris_weights.bin)
+ * 2. C header file with quantized weights for embedding in RISC-V binary
+ *
+ * Compile: g++ -o train_mlp_host train_mlp_host.cc -O2 -lm
+ * Run: ./train_mlp_host [quant_bits]
  *
  * @author FIONA Project
  * @date 2025-12-05
@@ -13,16 +17,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
 
-#include "fiona.h"
-#include "nn/weights_io.h"
-
-// Default weight file path
-#define WEIGHT_FILE "mlp_iris_weights.bin"
-
-// ============================================================
 // Dataset Configuration
-// ============================================================
 #define NUM_TRAIN    120
 #define NUM_TEST     30
 #define NUM_FEATURES 4
@@ -33,10 +30,10 @@
 #define NUM_EPOCHS   500
 #define LEARNING_RATE 0.1f
 
-// ============================================================
-// Iris Dataset (normalized to [0, 1] range)
-// ============================================================
+// Default quantization
+#define DEFAULT_QUANT_BITS 5
 
+// Iris Dataset
 static const float train_X[NUM_TRAIN][NUM_FEATURES] = {
     // Setosa (40 samples)
     {0.222, 0.625, 0.068, 0.042}, {0.167, 0.417, 0.068, 0.042}, {0.111, 0.500, 0.051, 0.042},
@@ -92,17 +89,14 @@ static const int train_Y[NUM_TRAIN] = {
 };
 
 static const float test_X[NUM_TEST][NUM_FEATURES] = {
-    // Setosa (10)
     {0.167, 0.542, 0.068, 0.042}, {0.250, 0.583, 0.085, 0.042}, {0.333, 0.792, 0.051, 0.042},
     {0.222, 0.708, 0.068, 0.083}, {0.278, 0.667, 0.102, 0.083}, {0.167, 0.625, 0.085, 0.042},
     {0.306, 0.667, 0.085, 0.042}, {0.194, 0.625, 0.068, 0.042}, {0.222, 0.667, 0.085, 0.083},
     {0.139, 0.500, 0.051, 0.042},
-    // Versicolor (10)
     {0.361, 0.208, 0.508, 0.417}, {0.472, 0.333, 0.576, 0.500}, {0.389, 0.333, 0.508, 0.417},
     {0.306, 0.333, 0.492, 0.458}, {0.472, 0.208, 0.593, 0.500}, {0.222, 0.208, 0.458, 0.458},
     {0.361, 0.333, 0.559, 0.458}, {0.389, 0.375, 0.559, 0.500}, {0.306, 0.292, 0.542, 0.458},
     {0.528, 0.333, 0.593, 0.458},
-    // Virginica (10)
     {0.611, 0.417, 0.780, 0.875}, {0.694, 0.333, 0.814, 0.708}, {0.528, 0.375, 0.729, 0.792},
     {0.639, 0.542, 0.797, 0.875}, {0.778, 0.458, 0.864, 0.833}, {0.667, 0.292, 0.797, 0.750},
     {0.583, 0.333, 0.780, 0.792}, {0.500, 0.333, 0.763, 0.792}, {0.722, 0.542, 0.814, 0.917},
@@ -115,9 +109,7 @@ static const int test_Y[NUM_TEST] = {
     2,2,2,2,2,2,2,2,2,2
 };
 
-// ============================================================
 // Network Weights
-// ============================================================
 static float W1[NUM_FEATURES][HIDDEN_SIZE];
 static float b1[HIDDEN_SIZE];
 static float W2[HIDDEN_SIZE][NUM_CLASSES];
@@ -129,9 +121,12 @@ static float db1[HIDDEN_SIZE];
 static float dW2[HIDDEN_SIZE][NUM_CLASSES];
 static float db2[NUM_CLASSES];
 
-// ============================================================
-// Random Initialization (Xavier)
-// ============================================================
+// Intermediate values
+static float h1[NUM_TRAIN][HIDDEN_SIZE];
+static float a1[NUM_TRAIN][HIDDEN_SIZE];
+static float out[NUM_TRAIN][NUM_CLASSES];
+
+// Random initialization
 static uint32_t rand_seed = 42;
 
 static float random_uniform() {
@@ -161,19 +156,11 @@ static void init_weights() {
     }
 }
 
-// ============================================================
-// Forward Pass
-// ============================================================
-static float h1[NUM_TRAIN][HIDDEN_SIZE];  // Pre-activation
-static float a1[NUM_TRAIN][HIDDEN_SIZE];  // After ReLU
-static float out[NUM_TRAIN][NUM_CLASSES]; // Softmax output
-
 static inline float relu(float x) {
     return x > 0.0f ? x : 0.0f;
 }
 
 static void forward(const float X[][NUM_FEATURES], int n) {
-    // Layer 1: h1 = X @ W1 + b1
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < HIDDEN_SIZE; j++) {
             float sum = b1[j];
@@ -185,7 +172,6 @@ static void forward(const float X[][NUM_FEATURES], int n) {
         }
     }
 
-    // Layer 2: out = softmax(a1 @ W2 + b2)
     for (int i = 0; i < n; i++) {
         float max_val = -1e9f;
         for (int j = 0; j < NUM_CLASSES; j++) {
@@ -197,7 +183,6 @@ static void forward(const float X[][NUM_FEATURES], int n) {
             if (sum > max_val) max_val = sum;
         }
 
-        // Softmax with numerical stability
         float sum_exp = 0.0f;
         for (int j = 0; j < NUM_CLASSES; j++) {
             out[i][j] = expf(out[i][j] - max_val);
@@ -209,31 +194,24 @@ static void forward(const float X[][NUM_FEATURES], int n) {
     }
 }
 
-// ============================================================
-// Backward Pass (Cross-Entropy Loss)
-// ============================================================
 static float backward(const float X[][NUM_FEATURES], const int Y[], int n) {
     float total_loss = 0.0f;
 
-    // Zero gradients
     memset(dW1, 0, sizeof(dW1));
     memset(db1, 0, sizeof(db1));
     memset(dW2, 0, sizeof(dW2));
     memset(db2, 0, sizeof(db2));
 
     for (int i = 0; i < n; i++) {
-        // Cross-entropy loss: -log(out[i][Y[i]])
         float prob = out[i][Y[i]];
-        if (prob < 1e-7f) prob = 1e-7f;  // Avoid log(0)
+        if (prob < 1e-7f) prob = 1e-7f;
         total_loss -= logf(prob);
 
-        // Gradient of softmax + cross-entropy: d_out = out - one_hot(Y)
         float d_out[NUM_CLASSES];
         for (int j = 0; j < NUM_CLASSES; j++) {
             d_out[j] = out[i][j] - (j == Y[i] ? 1.0f : 0.0f);
         }
 
-        // Backprop through Layer 2
         for (int j = 0; j < NUM_CLASSES; j++) {
             for (int k = 0; k < HIDDEN_SIZE; k++) {
                 dW2[k][j] += a1[i][k] * d_out[j];
@@ -241,7 +219,6 @@ static float backward(const float X[][NUM_FEATURES], const int Y[], int n) {
             db2[j] += d_out[j];
         }
 
-        // d_a1 = d_out @ W2.T
         float d_a1[HIDDEN_SIZE];
         for (int k = 0; k < HIDDEN_SIZE; k++) {
             float sum = 0.0f;
@@ -251,13 +228,11 @@ static float backward(const float X[][NUM_FEATURES], const int Y[], int n) {
             d_a1[k] = sum;
         }
 
-        // Backprop through ReLU
         float d_h1[HIDDEN_SIZE];
         for (int k = 0; k < HIDDEN_SIZE; k++) {
             d_h1[k] = h1[i][k] > 0.0f ? d_a1[k] : 0.0f;
         }
 
-        // Backprop through Layer 1
         for (int j = 0; j < HIDDEN_SIZE; j++) {
             for (int k = 0; k < NUM_FEATURES; k++) {
                 dW1[k][j] += X[i][k] * d_h1[j];
@@ -266,7 +241,6 @@ static float backward(const float X[][NUM_FEATURES], const int Y[], int n) {
         }
     }
 
-    // Average gradients and loss
     float scale = 1.0f / n;
     for (int i = 0; i < NUM_FEATURES; i++)
         for (int j = 0; j < HIDDEN_SIZE; j++)
@@ -282,9 +256,6 @@ static float backward(const float X[][NUM_FEATURES], const int Y[], int n) {
     return total_loss / n;
 }
 
-// ============================================================
-// SGD Update
-// ============================================================
 static void update_weights() {
     for (int i = 0; i < NUM_FEATURES; i++)
         for (int j = 0; j < HIDDEN_SIZE; j++)
@@ -301,14 +272,10 @@ static void update_weights() {
         b2[j] -= LEARNING_RATE * db2[j];
 }
 
-// ============================================================
-// Evaluation
-// ============================================================
 static float evaluate(const float X[][NUM_FEATURES], const int Y[], int n) {
     int correct = 0;
 
     for (int i = 0; i < n; i++) {
-        // Forward pass for single sample
         float hidden[HIDDEN_SIZE];
         for (int j = 0; j < HIDDEN_SIZE; j++) {
             float sum = b1[j];
@@ -318,7 +285,6 @@ static float evaluate(const float X[][NUM_FEATURES], const int Y[], int n) {
             hidden[j] = relu(sum);
         }
 
-        // Output layer
         int pred = 0;
         float max_val = -1e9f;
         for (int j = 0; j < NUM_CLASSES; j++) {
@@ -338,143 +304,191 @@ static float evaluate(const float X[][NUM_FEATURES], const int Y[], int n) {
     return (float)correct / n;
 }
 
-// ============================================================
-// Weight Save Helper
-// ============================================================
-static void save_trained_weights(const char *filename) {
-    // Prepare MLPWeights structure
-    MLPWeights mlp;
-    mlp.num_layers = 3;  // Input, Hidden, Output
-    mlp.layer_sizes[0] = NUM_FEATURES;
-    mlp.layer_sizes[1] = HIDDEN_SIZE;
-    mlp.layer_sizes[2] = NUM_CLASSES;
-
-    // Allocate and copy weights (2 weight layers)
-    mlp.weights = (float **)malloc(2 * sizeof(float *));
-    mlp.biases = (float **)malloc(2 * sizeof(float *));
-
-    // Layer 1: W1 and b1
-    mlp.weights[0] = (float *)malloc(NUM_FEATURES * HIDDEN_SIZE * sizeof(float));
-    mlp.biases[0] = (float *)malloc(HIDDEN_SIZE * sizeof(float));
-    for (int i = 0; i < NUM_FEATURES; i++) {
-        for (int j = 0; j < HIDDEN_SIZE; j++) {
-            mlp.weights[0][i * HIDDEN_SIZE + j] = W1[i][j];
-        }
+// Find max absolute value
+static float find_max_abs(const float *arr, int size) {
+    float max_val = 0.0f;
+    for (int i = 0; i < size; i++) {
+        float abs_val = fabsf(arr[i]);
+        if (abs_val > max_val) max_val = abs_val;
     }
-    for (int j = 0; j < HIDDEN_SIZE; j++) {
-        mlp.biases[0][j] = b1[j];
-    }
-
-    // Layer 2: W2 and b2
-    mlp.weights[1] = (float *)malloc(HIDDEN_SIZE * NUM_CLASSES * sizeof(float));
-    mlp.biases[1] = (float *)malloc(NUM_CLASSES * sizeof(float));
-    for (int i = 0; i < HIDDEN_SIZE; i++) {
-        for (int j = 0; j < NUM_CLASSES; j++) {
-            mlp.weights[1][i * NUM_CLASSES + j] = W2[i][j];
-        }
-    }
-    for (int j = 0; j < NUM_CLASSES; j++) {
-        mlp.biases[1][j] = b2[j];
-    }
-
-    // Save to file
-    if (save_mlp_weights(filename, &mlp) == 0) {
-        print_mlp_summary(&mlp);
-    }
-
-    // Cleanup
-    free_mlp_weights(&mlp);
+    return max_val;
 }
 
-// ============================================================
-// Main
-// ============================================================
-int main() {
+// Quantize to int16
+static int16_t quantize(float val, float scale) {
+    float q = roundf(val * scale);
+    if (q > 32767.0f) q = 32767.0f;
+    if (q < -32768.0f) q = -32768.0f;
+    return (int16_t)q;
+}
+
+// Save C header with quantized weights
+static void save_weights_header(const char *filename, int quant_bits) {
+    FILE *fp = fopen(filename, "w");
+    if (!fp) {
+        printf("[ERROR] Cannot open %s for writing\n", filename);
+        return;
+    }
+
+    float quant_scale = (float)(1 << (quant_bits - 1));
+
+    // Find scales
+    float w1_max = find_max_abs(&W1[0][0], NUM_FEATURES * HIDDEN_SIZE);
+    float w2_max = find_max_abs(&W2[0][0], HIDDEN_SIZE * NUM_CLASSES);
+    float w1_scale = quant_scale / w1_max;
+    float w2_scale = quant_scale / w2_max;
+
+    fprintf(fp, "/**\n");
+    fprintf(fp, " * @file %s\n", filename);
+    fprintf(fp, " * @brief Auto-generated MLP weights for Iris dataset\n");
+    fprintf(fp, " * \n");
+    fprintf(fp, " * Architecture: %d -> %d -> %d\n", NUM_FEATURES, HIDDEN_SIZE, NUM_CLASSES);
+    fprintf(fp, " * Quantization: %d-bit\n", quant_bits);
+    fprintf(fp, " * W1 scale: %.4f, W2 scale: %.4f\n", w1_scale, w2_scale);
+    fprintf(fp, " * \n");
+    fprintf(fp, " * Generated by train_mlp_host.cc\n");
+    fprintf(fp, " */\n\n");
+
+    fprintf(fp, "#ifndef MLP_IRIS_WEIGHTS_H\n");
+    fprintf(fp, "#define MLP_IRIS_WEIGHTS_H\n\n");
+
+    fprintf(fp, "#include \"base/config.h\"\n\n");
+
+    fprintf(fp, "// Quantization info\n");
+    fprintf(fp, "#define MLP_QUANT_BITS %d\n", quant_bits);
+    fprintf(fp, "#define MLP_W1_SCALE %.6ff\n", w1_scale);
+    fprintf(fp, "#define MLP_W2_SCALE %.6ff\n\n", w2_scale);
+
+    // W1: [HIDDEN_SIZE][NUM_FEATURES] (transposed for efficient MVM)
+    fprintf(fp, "// FC1 weights: %d x %d (transposed)\n", HIDDEN_SIZE, NUM_FEATURES);
+    fprintf(fp, "static const elem_t mlp_w1[%d][%d] = {\n", HIDDEN_SIZE, NUM_FEATURES);
+    for (int j = 0; j < HIDDEN_SIZE; j++) {
+        fprintf(fp, "    {");
+        for (int i = 0; i < NUM_FEATURES; i++) {
+            int16_t q = quantize(W1[i][j], w1_scale);
+            fprintf(fp, "%d", q);
+            if (i < NUM_FEATURES - 1) fprintf(fp, ", ");
+        }
+        fprintf(fp, "}");
+        if (j < HIDDEN_SIZE - 1) fprintf(fp, ",");
+        fprintf(fp, "\n");
+    }
+    fprintf(fp, "};\n\n");
+
+    // b1: [HIDDEN_SIZE]
+    fprintf(fp, "// FC1 biases: %d\n", HIDDEN_SIZE);
+    fprintf(fp, "static const elem_t mlp_b1[%d] = {", HIDDEN_SIZE);
+    for (int j = 0; j < HIDDEN_SIZE; j++) {
+        int16_t q = quantize(b1[j], w1_scale * quant_scale);  // scale bias appropriately
+        fprintf(fp, "%d", q);
+        if (j < HIDDEN_SIZE - 1) fprintf(fp, ", ");
+    }
+    fprintf(fp, "};\n\n");
+
+    // W2: [NUM_CLASSES][HIDDEN_SIZE] (transposed)
+    fprintf(fp, "// FC2 weights: %d x %d (transposed)\n", NUM_CLASSES, HIDDEN_SIZE);
+    fprintf(fp, "static const elem_t mlp_w2[%d][%d] = {\n", NUM_CLASSES, HIDDEN_SIZE);
+    for (int j = 0; j < NUM_CLASSES; j++) {
+        fprintf(fp, "    {");
+        for (int i = 0; i < HIDDEN_SIZE; i++) {
+            int16_t q = quantize(W2[i][j], w2_scale);
+            fprintf(fp, "%d", q);
+            if (i < HIDDEN_SIZE - 1) fprintf(fp, ", ");
+        }
+        fprintf(fp, "}");
+        if (j < NUM_CLASSES - 1) fprintf(fp, ",");
+        fprintf(fp, "\n");
+    }
+    fprintf(fp, "};\n\n");
+
+    // b2: [NUM_CLASSES]
+    fprintf(fp, "// FC2 biases: %d\n", NUM_CLASSES);
+    fprintf(fp, "static const elem_t mlp_b2[%d] = {", NUM_CLASSES);
+    for (int j = 0; j < NUM_CLASSES; j++) {
+        int16_t q = quantize(b2[j], w2_scale);
+        fprintf(fp, "%d", q);
+        if (j < NUM_CLASSES - 1) fprintf(fp, ", ");
+    }
+    fprintf(fp, "};\n\n");
+
+    // Test data (quantized)
+    fprintf(fp, "// Test data: %d samples x %d features\n", NUM_TEST, NUM_FEATURES);
+    fprintf(fp, "static const elem_t mlp_test_X[%d][%d] = {\n", NUM_TEST, NUM_FEATURES);
+    for (int i = 0; i < NUM_TEST; i++) {
+        fprintf(fp, "    {");
+        for (int j = 0; j < NUM_FEATURES; j++) {
+            int16_t q = quantize(test_X[i][j], quant_scale);
+            fprintf(fp, "%d", q);
+            if (j < NUM_FEATURES - 1) fprintf(fp, ", ");
+        }
+        fprintf(fp, "}");
+        if (i < NUM_TEST - 1) fprintf(fp, ",");
+        fprintf(fp, "\n");
+    }
+    fprintf(fp, "};\n\n");
+
+    fprintf(fp, "// Test labels\n");
+    fprintf(fp, "static const elem_t mlp_test_Y[%d] = {", NUM_TEST);
+    for (int i = 0; i < NUM_TEST; i++) {
+        fprintf(fp, "%d", test_Y[i]);
+        if (i < NUM_TEST - 1) fprintf(fp, ", ");
+    }
+    fprintf(fp, "};\n\n");
+
+    fprintf(fp, "#endif /* MLP_IRIS_WEIGHTS_H */\n");
+
+    fclose(fp);
+    printf("[INFO] Saved quantized weights to: %s\n", filename);
+}
+
+int main(int argc, char *argv[]) {
+    int quant_bits = DEFAULT_QUANT_BITS;
+    if (argc > 1) {
+        quant_bits = atoi(argv[1]);
+        if (quant_bits < 2 || quant_bits > 16) {
+            printf("Invalid quant_bits. Using default: %d\n", DEFAULT_QUANT_BITS);
+            quant_bits = DEFAULT_QUANT_BITS;
+        }
+    }
+
     printf("============================================\n");
-    printf("  FIONA MLP Training (Backpropagation)\n");
+    printf("  MLP Training (Host) for FIONA\n");
     printf("============================================\n");
     printf("  Architecture: %d -> %d -> %d\n", NUM_FEATURES, HIDDEN_SIZE, NUM_CLASSES);
     printf("  Epochs: %d\n", NUM_EPOCHS);
     printf("  Learning rate: %.4f\n", LEARNING_RATE);
+    printf("  Quantization: %d-bit\n", quant_bits);
     printf("============================================\n\n");
 
-    // Initialize weights
     init_weights();
-
-    printf("=== Initial Evaluation ===\n");
-    float train_acc = evaluate(train_X, train_Y, NUM_TRAIN);
-    float test_acc = evaluate(test_X, test_Y, NUM_TEST);
-    printf("Train: %.2f%%, Test: %.2f%%\n\n", train_acc * 100.0f, test_acc * 100.0f);
 
     printf("=== Training ===\n");
     for (int epoch = 0; epoch < NUM_EPOCHS; epoch++) {
-        // Forward pass
         forward(train_X, NUM_TRAIN);
-
-        // Backward pass
         float loss = backward(train_X, train_Y, NUM_TRAIN);
-
-        // Update weights
         update_weights();
 
-        // Print every 10 epochs
-        if ((epoch + 1) % 20 == 0 || epoch == 0) {
-            train_acc = evaluate(train_X, train_Y, NUM_TRAIN);
-            test_acc = evaluate(test_X, test_Y, NUM_TEST);
+        if ((epoch + 1) % 100 == 0 || epoch == 0) {
+            float train_acc = evaluate(train_X, train_Y, NUM_TRAIN);
+            float test_acc = evaluate(test_X, test_Y, NUM_TEST);
             printf("Epoch %3d: loss=%.4f, train=%.2f%%, test=%.2f%%\n",
                    epoch + 1, loss, train_acc * 100.0f, test_acc * 100.0f);
         }
     }
 
-    // Final evaluation
     printf("\n=== Final Results ===\n");
-    train_acc = evaluate(train_X, train_Y, NUM_TRAIN);
-    test_acc = evaluate(test_X, test_Y, NUM_TEST);
+    float train_acc = evaluate(train_X, train_Y, NUM_TRAIN);
+    float test_acc = evaluate(test_X, test_Y, NUM_TEST);
     printf("Train accuracy: %.2f%%\n", train_acc * 100.0f);
     printf("Test accuracy:  %.2f%%\n", test_acc * 100.0f);
 
-    // Print test predictions
-    printf("\n=== Test Predictions ===\n");
-    printf("Pred: ");
-    for (int i = 0; i < NUM_TEST; i++) {
-        float hidden[HIDDEN_SIZE];
-        for (int j = 0; j < HIDDEN_SIZE; j++) {
-            float sum = b1[j];
-            for (int k = 0; k < NUM_FEATURES; k++) {
-                sum += test_X[i][k] * W1[k][j];
-            }
-            hidden[j] = relu(sum);
-        }
-
-        int pred = 0;
-        float max_val = -1e9f;
-        for (int j = 0; j < NUM_CLASSES; j++) {
-            float sum = b2[j];
-            for (int k = 0; k < HIDDEN_SIZE; k++) {
-                sum += hidden[k] * W2[k][j];
-            }
-            if (sum > max_val) {
-                max_val = sum;
-                pred = j;
-            }
-        }
-        printf("%d ", pred);
-    }
-    printf("\nTrue: ");
-    for (int i = 0; i < NUM_TEST; i++) {
-        printf("%d ", test_Y[i]);
-    }
-    printf("\n");
+    // Save weights as C header
+    printf("\n=== Saving Weights ===\n");
+    save_weights_header("mlp_iris_weights.h", quant_bits);
 
     printf("\n============================================\n");
     printf("  Training Complete!\n");
     printf("============================================\n");
-
-    // Save trained weights
-    printf("\n=== Saving Weights ===\n");
-    save_trained_weights(WEIGHT_FILE);
-
-    DUMP_STAT;
 
     return 0;
 }

@@ -175,6 +175,7 @@ class CharTransformer(nn.Module):
 
 def train(model, dataloader, epochs, lr=0.001, device='cpu'):
     """Train the model."""
+    import sys
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
@@ -198,6 +199,7 @@ def train(model, dataloader, epochs, lr=0.001, device='cpu'):
         avg_loss = total_loss / len(dataloader)
         if (epoch + 1) % 10 == 0 or epoch == 0:
             print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
+            sys.stdout.flush()
 
     return model
 
@@ -361,6 +363,8 @@ def main():
     parser.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu',
                         help='Device to use')
     parser.add_argument('--demo', action='store_true', help='Run demo with sample text')
+    parser.add_argument('--max-chars', type=int, default=0,
+                        help='Maximum characters to use (0 = all)')
     args = parser.parse_args()
 
     print(f"Model Configuration:")
@@ -377,7 +381,11 @@ def main():
     if args.data:
         with open(args.data, 'r', encoding='utf-8', errors='ignore') as f:
             text = f.read()
-        print(f"Loaded {len(text)} characters from {args.data}")
+        if args.max_chars > 0 and len(text) > args.max_chars:
+            text = text[:args.max_chars]
+            print(f"Loaded {len(text)} characters from {args.data} (truncated to {args.max_chars})")
+        else:
+            print(f"Loaded {len(text)} characters from {args.data}")
     elif args.demo:
         # Sample text for demo
         text = """

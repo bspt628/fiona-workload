@@ -22,8 +22,17 @@ applications = \
 	mlp_iris		\
 	mlp_iris_train	\
 	mlp_iris_infer	\
+	mlp_large		\
+	mlp_mnist		\
+	mlp_mnist_fp32	\
 	elm_iris		\
-	test_relu
+	test_relu		\
+	regression_benchmark	\
+	mlp_mnist_photonic	\
+	mlp_mnist_photonic_small	\
+	test_transformer	\
+	benchmark_transformer	\
+	text_gen_transformer
 
 #--------------------------------------------------------------------
 # Build rules

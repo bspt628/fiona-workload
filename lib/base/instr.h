@@ -31,4 +31,11 @@
 #define DOTP(rd, v1, v2)        { ROCC_INSTRUCTION_R_I_I(0, rd, v1, v2, 13, 10); }
 #define MVM(vd, v1)             { ROCC_INSTRUCTION_I_I_I(0, vd, v1, 0, 14); }
 
+// FP32 operations
+#define LOAD_V_FP32(vregnum, src)    { ROCC_INSTRUCTION_I_R_I(0, vregnum, src, 0, 16, 10); }
+#define STORE_V_FP32(vregnum, dst)   { ROCC_INSTRUCTION_I_R_I(0, 0, dst, vregnum, 17, 10); }
+#define MVM_FP32(vd, v1)             { ROCC_INSTRUCTION_I_I_I(0, vd, v1, 0, 18); }
+#define SET_VLEN_FP32(r1)            { ROCC_INSTRUCTION_I_R_I(0, 0, r1, 0, 19, 10); }
+#define SET_MAT_FP32(r1)             { ROCC_INSTRUCTION_I_R_I(0, 2, r1, 0, 19, 10); }
+
 #endif /* FIONA_INSTR_H */

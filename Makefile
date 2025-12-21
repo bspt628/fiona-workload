@@ -51,7 +51,11 @@ applications = \
 	mlp_mnist_photonic_small	\
 	test_transformer	\
 	benchmark_transformer	\
-	text_gen_transformer
+	text_gen_transformer	\
+	test_fp_simple	\
+	test_large_static	\
+	test_bss_size	\
+	test_bss_access
 
 #--------------------------------------------------------------------
 # Build rules

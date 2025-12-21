@@ -1,11 +1,66 @@
 #include "fiona.h"
 #include "utils/pprint.h"
 
-// quantization bit = 5
-static const elem_t mlp_fc1_weight[10][4]= {{-1, 7, -8, -5}, {-4, 5, -9, -8}, {9, -7, 7, 2}, {-3, 1, -4, 5}, {3, 8, -6, -2}, {6, -11, 7, -6}, {10, -9, 7, 5}, {-2, -1, 4, 4}, {1, -1, -8, -16}, {2, 3, -2, 5}};
-static const elem_t mlp_fc2_weight[3][10]= {{10, 8, -8, 3, 3, -8, -9, -2, 11, 0}, {-8, -7, -1, 2, -5, 12, -5, -3, 11, -2}, {-2, -2, 6, 0, -6, 6, 10, -4, -16, -1}};
+// FIONA-V VLSU requires 64-byte alignment for ALL vector load addresses.
+// Each row must be padded to 32 elements (64 bytes) for alignment.
+#define VLEN_PAD 32
 
-static const elem_t iris_test_X[30][4]= {{16, -2, 10, -4}, {10, -1, 9, -4}, {5, -2, -8, -12}, {10, -5, 4, -7}, {8, -2, 3, -8}, {14, -2, 10, -6}, {11, -2, 8, -5}, {10, -3, 5, -6}, {10, -2, 5, -8}, {11, -1, 7, -4}, {5, -1, -7, -12}, {8, 1, -6, -12}, {12, -2, 7, -5}, {16, -3, 13, -4}, {9, -3, 2, -9}, {8, 3, -7, -11}, {8, -2, 4, -7}, {5, 0, -7, -12}, {7, 0, -7, -11}, {6, 1, -6, -11}, {7, 1, -7, -12}, {5, -1, -7, -12}, {6, -1, -8, -12}, {13, -2, 9, -5}, {8, -2, 2, -8}, {10, 0, 7, -4}, {6, -1, -6, -11}, {6, 2, -7, -12}, {12, -4, 9, -6}, {11, -2, 9, -5}};
+// quantization bit = 5
+// FC1: 10 outputs, 4 inputs -> pad to [10][32]
+__attribute__((aligned(64))) static const elem_t mlp_fc1_weight[10][VLEN_PAD]= {
+    {-1, 7, -8, -5, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {-4, 5, -9, -8, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {9, -7, 7, 2, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {-3, 1, -4, 5, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {3, 8, -6, -2, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {6, -11, 7, -6, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {10, -9, 7, 5, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {-2, -1, 4, 4, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {1, -1, -8, -16, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {2, 3, -2, 5, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+};
+
+// FC2: 3 outputs, 10 inputs -> pad to [3][32]
+__attribute__((aligned(64))) static const elem_t mlp_fc2_weight[3][VLEN_PAD]= {
+    {10, 8, -8, 3, 3, -8, -9, -2, 11, 0, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {-8, -7, -1, 2, -5, 12, -5, -3, 11, -2, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {-2, -2, 6, 0, -6, 6, 10, -4, -16, -1, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+};
+
+// Input data: 30 samples, 4 features -> pad to [30][32]
+__attribute__((aligned(64))) static const elem_t iris_test_X[30][VLEN_PAD]= {
+    {16, -2, 10, -4, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {10, -1, 9, -4, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {5, -2, -8, -12, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {10, -5, 4, -7, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {8, -2, 3, -8, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {14, -2, 10, -6, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {11, -2, 8, -5, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {10, -3, 5, -6, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {10, -2, 5, -8, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {11, -1, 7, -4, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {5, -1, -7, -12, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {8, 1, -6, -12, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {12, -2, 7, -5, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {16, -3, 13, -4, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {9, -3, 2, -9, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {8, 3, -7, -11, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {8, -2, 4, -7, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {5, 0, -7, -12, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {7, 0, -7, -11, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {6, 1, -6, -11, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {7, 1, -7, -12, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {5, -1, -7, -12, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {6, -1, -8, -12, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {13, -2, 9, -5, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {8, -2, 2, -8, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {10, 0, 7, -4, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {6, -1, -6, -11, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {6, 2, -7, -12, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {12, -4, 9, -6, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+    {11, -2, 9, -5, 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}
+};
+
 static const elem_t iris_test_Y[30]= {2, 2, 0, 1, 1, 2, 2, 2, 1, 2, 0, 0, 2, 2, 1, 0, 1, 0, 0, 0, 0, 0, 0, 2, 1, 2, 0, 0, 2, 2};
 
 int main() {
@@ -18,61 +73,42 @@ int main() {
     const size_t batch_size = 30;
     const size_t num_in = 4, num_hidden = 10, num_out = 3;
 
-    elem_t y_fc1[batch_size][num_hidden];
-    nn_linear(&y_fc1[0][0], &mlp_fc1_weight[0][0], &iris_test_X[0][0], num_in, num_hidden, batch_size);
+    // FC1: weight[10][4] x X[30][4] -> y_fc1[30][10]
+    // y_fc1 needs 64-byte aligned rows for FC2 input
+    alignas(64) elem_t y_fc1[batch_size][VLEN_PAD];
+    nn_linear_full_strided(&y_fc1[0][0], &mlp_fc1_weight[0][0], &iris_test_X[0][0],
+                           num_in, num_hidden, batch_size,
+                           VLEN_PAD, VLEN_PAD, VLEN_PAD);
 
-    // Debug: Print first 2 samples of FC1 output
-    printf("[debug] FC1 output (first 2 samples):\n");
-    for(size_t i = 0; i < 2 && i < batch_size; ++i) {
-        printf("  Sample %d: [", i);
+    // ReLU: element-wise, operates on y_fc1[30][VLEN_PAD]
+    alignas(64) elem_t y_relu[batch_size][VLEN_PAD];
+    // Only apply ReLU to the first num_hidden elements of each row
+    for(size_t i = 0; i < batch_size; ++i) {
         for(size_t j = 0; j < num_hidden; ++j) {
-            printf("%d", y_fc1[i][j]);
-            if(j < num_hidden - 1) printf(", ");
+            y_relu[i][j] = (y_fc1[i][j] > 0) ? y_fc1[i][j] : 0;
         }
-        printf("]\n");
+        // Zero padding is already 0, no need to set
     }
 
-    elem_t y_relu[batch_size][num_hidden];
+    // FC2: weight[3][10] x y_relu[30][10] -> y_fc2[30][3]
+    alignas(64) elem_t y_fc2[batch_size][VLEN_PAD];
+    nn_linear_full_strided(&y_fc2[0][0], &mlp_fc2_weight[0][0], &y_relu[0][0],
+                           num_hidden, num_out, batch_size,
+                           VLEN_PAD, VLEN_PAD, VLEN_PAD);
 
-    // Debug: Print input pointer addresses
-    printf("[debug] Before ReLU: y_fc1 address = %p, y_relu address = %p\n", (void*)&y_fc1[0][0], (void*)&y_relu[0][0]);
-    printf("[debug] y_fc1[0] (first 10): [");
-    for(size_t j = 0; j < num_hidden; ++j) {
-        printf("%d", y_fc1[0][j]);
-        if(j < num_hidden - 1) printf(", ");
-    }
-    printf("]\n");
-    printf("[debug] y_fc1[1] (first 10): [");
-    for(size_t j = 0; j < num_hidden; ++j) {
-        printf("%d", y_fc1[1][j]);
-        if(j < num_hidden - 1) printf(", ");
-    }
-    printf("]\n");
-
-    tiled_matrix_relu(&y_relu[0][0], &y_fc1[0][0], batch_size, num_hidden);
-
-    // Debug: Print first 2 samples of ReLU output
-    printf("[debug] ReLU output (first 2 samples):\n");
-    for(size_t i = 0; i < 2 && i < batch_size; ++i) {
-        printf("  Sample %d: [", i);
-        for(size_t j = 0; j < num_hidden; ++j) {
-            printf("%d", y_relu[i][j]);
-            if(j < num_hidden - 1) printf(", ");
-        }
-        printf("]\n");
-    }
-
-    elem_t y_fc2[batch_size][num_out];
-    nn_linear(&y_fc2[0][0], &mlp_fc2_weight[0][0], &y_relu[0][0], num_hidden, num_out, batch_size);
-
-    // Debug: Print first 5 samples of FC2 output
-    printf("[debug] FC2 output (first 5 samples):\n");
-    for(size_t i = 0; i < 5 && i < batch_size; ++i) {
-        printf("  Sample %d: [%d, %d, %d]\n", i, y_fc2[i][0], y_fc2[i][1], y_fc2[i][2]);
-    }
-
+    // Argmax on y_fc2 (only first num_out elements per row)
     elem_t y_pred[batch_size];
-    matrix_vector_argmax(y_pred, &y_fc2[0][0], batch_size, num_out);
+    for(size_t i = 0; i < batch_size; ++i) {
+        elem_t max_val = y_fc2[i][0];
+        elem_t max_idx = 0;
+        for(size_t j = 1; j < num_out; ++j) {
+            if(y_fc2[i][j] > max_val) {
+                max_val = y_fc2[i][j];
+                max_idx = j;
+            }
+        }
+        y_pred[i] = max_idx;
+    }
 
     printf("[test] y_pred = ");
     print_vec(y_pred, batch_size);
@@ -80,15 +116,12 @@ int main() {
     printf("[test] y_true = ");
     print_vec(iris_test_Y, batch_size);
 
-    elem_t count_correct;
-    elem_t bool_equal[batch_size];
-    vector_equal(bool_equal, y_pred, iris_test_Y, batch_size);
-    vector_sum(&count_correct, bool_equal, batch_size);
-    
-    printf("[info] test accuracy: %d / %d = %.2f%%\n", count_correct, batch_size, (float)count_correct/batch_size*100.0);
+    elem_t count_correct = 0;
+    for(size_t i = 0; i < batch_size; ++i) {
+        if(y_pred[i] == iris_test_Y[i]) count_correct++;
+    }
 
-    DUMP_STAT;
+    printf("[info] test accuracy: %d / %d = %.2f%%\n", count_correct, batch_size, (float)count_correct/batch_size*100.0);
 
     return 0;
 }
-

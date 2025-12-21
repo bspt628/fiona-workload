@@ -81,11 +81,15 @@ RISCV_PREFIX := $(RISCV_MEDANY_DIR)/bin/riscv$(XLEN)-unknown-elf-
 RISCV_GXX := $(RISCV_PREFIX)g++
 RISCV_OBJDUMP := $(RISCV_PREFIX)objdump --disassemble-all --disassemble-zeroes --section=.text --section=.text.startup --section=.text.init --section=.data
 RISCV_OBJCOPY := $(RISCV_PREFIX)objcopy -S --set-section-flags .bss=alloc,contents -O binary
+# Note: -fno-use-cxa-atexit avoids __dso_handle requirement from C++ runtime
 RISCV_GXX_OPTS ?= -static -std=gnu++11 -O2 -ffast-math -fno-tree-loop-distribute-patterns \
+	-fno-use-cxa-atexit \
 	-specs=$(LIBGLOSS_UTIL)/htif_nano.specs \
 	-L$(LIBGLOSS_UTIL) \
 	-L$(LIBGLOSS_BUILD)
-RISCV_LINK_OPTS ?= -static -lm -lstdc++
+# Note: -Wl,--defsym,__dso_handle=0 provides dummy symbol for C++ static destructors
+# Stubs are compiled directly with sources (not as library) to ensure proper link order
+RISCV_LINK_OPTS ?= -static -lm -Wl,--defsym,__dso_handle=0
 BUILD_MODE = baremetal
 else
 # pk (proxy kernel) build for Spike (default)
@@ -99,6 +103,35 @@ RISCV_LINK ?= $(RISCV_GXX) $(incs)
 RISCV_SIM ?= spike pk --isa=rv$(XLEN)gc --extension=fiona
 
 
+# Baremetal-specific stubs (compiled directly with sources)
+ifeq ($(BAREMETAL),1)
+BAREMETAL_STUBS = $(wildcard $(src_dir)/lib/baremetal/*.c)
+endif
+
+ifeq ($(BAREMETAL),1)
+define compile_template
+$(target_dir)/$(1).elf: $(wildcard $(src_dir)/app/$(1)/*)
+	@echo "Building $(1) [mode: $(BUILD_MODE)]"
+	mkdir -p $(target_dir)
+	$$(RISCV_GXX) $$(incs) $$(RISCV_GXX_OPTS) -o $$@ \
+		$(wildcard $(src_dir)/app/$(1)/*.c) \
+		$(wildcard $(src_dir)/app/$(1)/*.cc) \
+		$(wildcard $(src_dir)/app/$(1)/*.S) \
+		$(wildcard $(src_dir)/lib/math/*.c) \
+		$(wildcard $(src_dir)/lib/math/*.cc) \
+		$(wildcard $(src_dir)/lib/math/*.S) \
+		$(wildcard $(src_dir)/lib/nn/*.c) \
+		$(wildcard $(src_dir)/lib/nn/*.cc) \
+		$(wildcard $(src_dir)/lib/nn/*.S) \
+		$(wildcard $(src_dir)/lib/utils/*.c) \
+		$(wildcard $(src_dir)/lib/utils/*.cc) \
+		$(wildcard $(src_dir)/lib/utils/*.S) \
+		$$(BAREMETAL_STUBS) \
+		$$(RISCV_LINK_OPTS)
+	$$(RISCV_OBJDUMP) $$@ > $$(target_dir)/$(1).S
+	$$(RISCV_OBJCOPY) $$@   $$(target_dir)/$(1).bin
+endef
+else
 define compile_template
 $(target_dir)/$(1).elf: $(wildcard $(src_dir)/app/$(1)/*)
 	@echo "Building $(1) [mode: $(BUILD_MODE)]"
@@ -120,6 +153,7 @@ $(target_dir)/$(1).elf: $(wildcard $(src_dir)/app/$(1)/*)
 	$$(RISCV_OBJDUMP) $$@ > $$(target_dir)/$(1).S
 	$$(RISCV_OBJCOPY) $$@   $$(target_dir)/$(1).bin
 endef
+endif
 
 $(foreach app,$(applications),$(eval $(call compile_template,$(app))))
 

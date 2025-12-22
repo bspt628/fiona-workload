@@ -50,6 +50,8 @@ applications = \
 	mlp_mnist_photonic	\
 	mlp_mnist_photonic_small	\
 	test_transformer	\
+	test_transformer_int16	\
+	transformer_photonic_int16	\
 	benchmark_transformer	\
 	text_gen_transformer	\
 	test_fp_simple	\

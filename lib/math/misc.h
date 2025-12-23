@@ -2,7 +2,7 @@
 #define FIONA_MISCELLANEOUS_H
 
 #include "base/config.h"
-#include "base/instr.h"
+#include "backend/backend.h"
 
 // @max.v
 void fit_vector_max(elem_t *retval, const elem_t *vec, size_t vlen);

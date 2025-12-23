@@ -2,7 +2,7 @@
 #define FIONA_ELECTRONIC_ALU_H
 
 #include "base/config.h"
-#include "base/instr.h"
+#include "backend/backend.h"
 
 // @add.v
 void fit_vector_add(elem_t *retval, const elem_t *vec1, const elem_t *vec2, size_t vlen);

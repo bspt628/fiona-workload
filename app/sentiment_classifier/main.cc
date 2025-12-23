@@ -17,7 +17,6 @@
 #include <math.h>
 
 #include "fiona.h"
-#include "nn/transformer.h"
 
 // Include exported weights
 #include "weights/weights.h"

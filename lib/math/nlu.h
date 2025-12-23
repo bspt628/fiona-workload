@@ -2,7 +2,7 @@
 #define FIONA_NONLINEAR_UNIT_H
 
 #include "base/config.h"
-#include "base/instr.h"
+#include "backend/backend.h"
 
 // @relu.v
 void fit_vector_relu(elem_t *retval, const elem_t *vec, size_t vlen);

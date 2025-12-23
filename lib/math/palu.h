@@ -2,7 +2,7 @@
 #define FIONA_PHOTONIC_ALU_H
 
 #include "base/config.h"
-#include "base/instr.h"
+#include "backend/backend.h"
 
 void fit_dotprod(elem_t *retval, const elem_t *vec1, const elem_t *vec2, size_t vlen);
 void tiled_dotprod(elem_t *retval, const elem_t *vec1, const elem_t *vec2, size_t vlen);

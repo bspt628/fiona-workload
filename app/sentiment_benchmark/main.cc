@@ -15,7 +15,6 @@
 #include <math.h>
 
 #include "fiona.h"
-#include "nn/transformer.h"
 
 // Include exported weights
 #include "weights/weights.h"
@@ -284,20 +283,23 @@ int main() {
     printf("  Seq length:   %d\n\n", SST2_SEQ_LEN);
 
     printf("Running evaluation...\n");
+    printf("  [Verbose mode enabled]\n\n");
 
     int correct = 0;
     int true_pos = 0, true_neg = 0;
     int false_pos = 0, false_neg = 0;
 
-    // Progress reporting interval
-    int report_interval = SST2_NUM_SAMPLES / 10;
-    if (report_interval == 0) report_interval = 1;
+    // More frequent progress reporting (every 10 samples or 1%)
+    int report_interval = 10;
+    if (SST2_NUM_SAMPLES < 100) report_interval = 1;
 
     for (int t = 0; t < SST2_NUM_SAMPLES; t++) {
-        // Progress report
-        if ((t + 1) % report_interval == 0 || t == SST2_NUM_SAMPLES - 1) {
-            printf("  Progress: %d/%d (%.1f%%)\n",
-                   t + 1, SST2_NUM_SAMPLES, 100.0f * (t + 1) / SST2_NUM_SAMPLES);
+        // Detailed progress report
+        if (t % report_interval == 0) {
+            float pct = 100.0f * t / SST2_NUM_SAMPLES;
+            float acc_so_far = (t > 0) ? 100.0f * correct / t : 0.0f;
+            printf("  [%4d/%4d] %.1f%% | Acc so far: %.2f%% | Correct: %d\n",
+                   t, SST2_NUM_SAMPLES, pct, acc_so_far, correct);
         }
 
         // Get token IDs for this sample

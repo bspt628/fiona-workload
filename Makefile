@@ -43,19 +43,11 @@ applications = \
 	mlp_iris_infer	\
 	mlp_large		\
 	mlp_mnist		\
-	mlp_mnist_fp32	\
 	elm_iris		\
 	test_relu		\
-	regression_benchmark	\
-	mlp_mnist_photonic	\
-	mlp_mnist_photonic_small	\
-	test_transformer	\
 	test_transformer_int16	\
-	benchmark_transformer	\
-	text_gen_transformer	\
 	sentiment_classifier	\
 	sentiment_benchmark	\
-	sentiment_photonic	\
 	sentiment_benchmark_photonic	\
 	test_fp_simple	\
 	test_large_static	\

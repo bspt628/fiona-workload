@@ -14,7 +14,6 @@
 #include "nn/conv.h"
 #include "nn/norm.h"
 #include "nn/pool.h"
-#include "nn/transformer.h"
 
 
 #endif /* FIONA_H */

@@ -51,9 +51,12 @@ applications = \
 	mlp_mnist_photonic_small	\
 	test_transformer	\
 	test_transformer_int16	\
-	transformer_photonic_int16	\
 	benchmark_transformer	\
 	text_gen_transformer	\
+	sentiment_classifier	\
+	sentiment_benchmark	\
+	sentiment_photonic	\
+	sentiment_benchmark_photonic	\
 	test_fp_simple	\
 	test_large_static	\
 	test_bss_size	\
@@ -63,7 +66,7 @@ applications = \
 # Build rules
 #--------------------------------------------------------------------
 
-incs  += -I$(src_dir)/lib $(addprefix -I$(src_dir)/app/, $(applications))
+incs  += -I$(src_dir)/lib $(addprefix -I$(src_dir)/app/, $(applications)) -I$(src_dir)/app/sentiment_classifier
 objs  :=
 
 RISCV_PREFIX ?= riscv$(XLEN)-unknown-elf-

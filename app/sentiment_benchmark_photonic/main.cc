@@ -629,7 +629,24 @@ void quantize_all_weights() {
 // Main Benchmark
 // ============================================================
 
-int main() {
+int main(int argc, char* argv[]) {
+    // Parse command-line arguments for parallel execution
+    int start_sample = 0;
+    int end_sample = SST2_NUM_SAMPLES;
+
+    if (argc >= 3) {
+        start_sample = atoi(argv[1]);
+        end_sample = atoi(argv[2]);
+        if (start_sample < 0) start_sample = 0;
+        if (end_sample > SST2_NUM_SAMPLES) end_sample = SST2_NUM_SAMPLES;
+        if (start_sample >= end_sample) {
+            printf("Error: start_sample >= end_sample\n");
+            return 1;
+        }
+    }
+
+    int num_samples = end_sample - start_sample;
+
     printf("============================================\n");
     printf("  TinySentiment SST-2 Benchmark (Photonic)\n");
     printf("============================================\n\n");
@@ -651,7 +668,7 @@ int main() {
 
     printf("Evaluation set:\n");
     printf("  Dataset:      SST-2 validation\n");
-    printf("  Samples:      %d\n", SST2_NUM_SAMPLES);
+    printf("  Samples:      %d (range: %d-%d)\n", num_samples, start_sample, end_sample);
     printf("  Seq length:   %d\n\n", SST2_SEQ_LEN);
 
     // Quantize all weights
@@ -664,7 +681,7 @@ int main() {
     int true_pos = 0, true_neg = 0;
     int false_pos = 0, false_neg = 0;
 
-    for (int t = 0; t < SST2_NUM_SAMPLES; t++) {
+    for (int t = start_sample; t < end_sample; t++) {
         // Get token IDs
         int token_ids[MAX_SEQ_LEN];
         for (int i = 0; i < SST2_SEQ_LEN && i < MAX_SEQ_LEN; i++) {
@@ -734,16 +751,17 @@ int main() {
         }
 
         // 各サンプル処理後にログ出力
-        float acc_now = 100.0f * correct / (t + 1);
-        printf("  [%4d/%4d] pred=%d label=%d %s | Acc: %.2f%% (%d/%d)\n",
-               t + 1, SST2_NUM_SAMPLES,
+        int processed = t - start_sample + 1;
+        float acc_now = 100.0f * correct / processed;
+        printf("  [%4d/%4d] (idx=%d) pred=%d label=%d %s | Acc: %.2f%% (%d/%d)\n",
+               processed, num_samples, t,
                pred, label,
                (pred == label) ? "OK" : "NG",
-               acc_now, correct, t + 1);
+               acc_now, correct, processed);
     }
 
     // Calculate metrics
-    float accuracy = 100.0f * correct / SST2_NUM_SAMPLES;
+    float accuracy = 100.0f * correct / num_samples;
     float precision = (true_pos + false_pos > 0) ?
         100.0f * true_pos / (true_pos + false_pos) : 0.0f;
     float recall = (true_pos + false_neg > 0) ?
@@ -753,6 +771,7 @@ int main() {
 
     printf("\n============================================\n");
     printf("  RESULTS (Photonic INT16)\n");
+    printf("  Sample range: %d-%d (%d samples)\n", start_sample, end_sample, num_samples);
     printf("============================================\n\n");
 
     printf("Confusion Matrix:\n");
@@ -762,7 +781,7 @@ int main() {
     printf("         POS  %4d     %4d\n\n", false_neg, true_pos);
 
     printf("Metrics:\n");
-    printf("  Accuracy:   %.2f%% (%d/%d)\n", accuracy, correct, SST2_NUM_SAMPLES);
+    printf("  Accuracy:   %.2f%% (%d/%d)\n", accuracy, correct, num_samples);
     printf("  Precision:  %.2f%%\n", precision);
     printf("  Recall:     %.2f%%\n", recall);
     printf("  F1 Score:   %.2f%%\n", f1);

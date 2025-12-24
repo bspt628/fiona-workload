@@ -91,6 +91,16 @@ static const elem_t train_Y_onehot[NUM_TRAIN][NUM_CLASSES] = {
     {0,0,SCALE},{0,0,SCALE},{0,0,SCALE},{0,0,SCALE},{0,0,SCALE},{0,0,SCALE},{0,0,SCALE},{0,0,SCALE},{0,0,SCALE},{0,0,SCALE}
 };
 
+// Train labels (class indices)
+static const elem_t train_Y[NUM_TRAIN] = {
+    // Setosa (40)
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+    // Versicolor (40)
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    // Virginica (40)
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+};
+
 static const elem_t test_X[NUM_TEST][NUM_FEATURES] = {
     // Setosa (10)
     {-19, 2, -23, -18}, {-14, 5, -21, -18}, {-11, 14, -24, -18}, {-19, 11, -23, -15}, {-14, 8, -20, -15},
@@ -247,11 +257,7 @@ int main() {
     // Train accuracy
     elem_t train_pred[NUM_TRAIN];
     predict(train_pred, &H_train[0][0], NUM_TRAIN);
-    float train_acc = compute_accuracy(train_pred, (elem_t[]){
-        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-        1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-        2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
-    }, NUM_TRAIN);
+    float train_acc = compute_accuracy(train_pred, train_Y, NUM_TRAIN);
     printf("Train accuracy: %.2f%%\n", train_acc * 100);
 
     // Test accuracy

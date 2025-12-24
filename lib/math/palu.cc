@@ -1,4 +1,5 @@
 #include "math/palu.h"
+#include <cstring>
 
 void fit_dotprod(elem_t *retval, const elem_t *vec1, const elem_t *vec2, size_t vlen) {
     assert(vlen <= PU_MRR_RING);

@@ -23,17 +23,17 @@
 #include "testdata/sst2_testdata.h"
 
 // ============================================================
-// Model Configuration
+// Model Configuration (from weights.h)
 // ============================================================
 
-#define D_MODEL        128
-#define N_HEADS        2
-#define D_K            (D_MODEL / N_HEADS)
-#define D_FF           256
-#define N_LAYERS       2
+#define D_MODEL        MODEL_D_MODEL
+#define N_HEADS        MODEL_N_HEADS
+#define D_K            MODEL_D_K
+#define D_FF           MODEL_D_FF
+#define N_LAYERS       MODEL_N_LAYERS
 #define MAX_SEQ_LEN    64
-#define NUM_LABELS     2
-#define VOCAB_SIZE     30522
+#define NUM_LABELS     MODEL_NUM_LABELS
+#define VOCAB_SIZE     MODEL_VOCAB_SIZE
 
 // ============================================================
 // Static Buffers
@@ -54,6 +54,9 @@ static float attn_proj[MAX_SEQ_LEN * D_MODEL];
 
 static float ffn_hidden[MAX_SEQ_LEN * D_FF];
 static float ffn_out[MAX_SEQ_LEN * D_MODEL];
+
+// Attention mask (1 = valid, 0 = padding)
+static int attention_mask[MAX_SEQ_LEN];
 
 // ============================================================
 // PyTorch-compatible implementations (same as main.cc)
@@ -130,7 +133,8 @@ void multihead_attention(
     const float* Wq, const float* bq,
     const float* Wk, const float* bk,
     const float* Wv, const float* bv,
-    const float* Wo, const float* bo
+    const float* Wo, const float* bo,
+    const int* attn_mask  // 1 = valid, 0 = padding
 ) {
     pytorch_linear_2d(Q, input, Wq, bq, seq_len, D_MODEL, D_MODEL);
     pytorch_linear_2d(K, input, Wk, bk, seq_len, D_MODEL, D_MODEL);
@@ -147,7 +151,14 @@ void multihead_attention(
                     int k_idx = j * D_MODEL + h * D_K + k;
                     score += Q[q_idx] * K[k_idx];
                 }
-                attn_scores[h * seq_len * seq_len + i * seq_len + j] = score * scale;
+                score *= scale;
+
+                // Apply attention mask: set padding positions to -inf
+                if (attn_mask != NULL && attn_mask[j] == 0) {
+                    score = -10000.0f;  // Large negative value -> softmax ~ 0
+                }
+
+                attn_scores[h * seq_len * seq_len + i * seq_len + j] = score;
             }
             softmax_row(&attn_scores[h * seq_len * seq_len + i * seq_len], seq_len);
         }
@@ -199,24 +210,29 @@ void transformer_encoder_layer(
     const float* W1, const float* b1,
     const float* W2, const float* b2,
     const float* ln1_gamma, const float* ln1_beta,
-    const float* ln2_gamma, const float* ln2_beta
+    const float* ln2_gamma, const float* ln2_beta,
+    const int* attn_mask  // Attention mask
 ) {
-    layer_norm_2d(normed, input, ln1_gamma, ln1_beta, seq_len, D_MODEL, 1e-5f);
-    multihead_attention(attn_proj, normed, seq_len, Wq, bq, Wk, bk, Wv, bv, Wo, bo);
+    // Post-LN (BERT style, norm_first=False)
+    // 1. Self-attention + residual + LayerNorm
+    multihead_attention(attn_proj, input, seq_len, Wq, bq, Wk, bk, Wv, bv, Wo, bo, attn_mask);
 
     for (int i = 0; i < seq_len * D_MODEL; i++) {
         temp[i] = input[i] + attn_proj[i];
     }
+    layer_norm_2d(normed, temp, ln1_gamma, ln1_beta, seq_len, D_MODEL, 1e-12f);
 
-    layer_norm_2d(normed, temp, ln2_gamma, ln2_beta, seq_len, D_MODEL, 1e-5f);
+    // 2. FFN + residual + LayerNorm
     feed_forward(ffn_out, normed, seq_len, W1, b1, W2, b2);
 
     for (int i = 0; i < seq_len * D_MODEL; i++) {
-        output[i] = temp[i] + ffn_out[i];
+        temp[i] = normed[i] + ffn_out[i];
     }
+    layer_norm_2d(output, temp, ln2_gamma, ln2_beta, seq_len, D_MODEL, 1e-12f);
 }
 
 void embed_tokens(const int* token_ids, int seq_len, float* output) {
+    // BERT embedding: token + position + token_type (all zeros) + LayerNorm
     for (int i = 0; i < seq_len; i++) {
         int token_id = token_ids[i];
         if (token_id < 0 || token_id >= VOCAB_SIZE) token_id = 100;
@@ -224,9 +240,14 @@ void embed_tokens(const int* token_ids, int seq_len, float* output) {
         for (int j = 0; j < D_MODEL; j++) {
             output[i * D_MODEL + j] =
                 token_embedding[token_id * D_MODEL + j] +
-                position_embedding[i * D_MODEL + j];
+                position_embedding[i * D_MODEL + j] +
+                token_type_embedding[j];  // token_type=0 for all tokens
         }
     }
+
+    // Apply embedding LayerNorm (BERT-specific)
+    layer_norm_2d(output, output, embedding_ln_gamma, embedding_ln_beta,
+                  seq_len, D_MODEL, 1e-12f);
 }
 
 int classify(const float* encoder_output, float* probs) {
@@ -308,6 +329,11 @@ int main() {
             token_ids[i] = sst2_token_ids[t][i];
         }
 
+        // Generate attention mask (1 = valid, 0 = padding)
+        for (int i = 0; i < SST2_SEQ_LEN; i++) {
+            attention_mask[i] = (token_ids[i] != 0) ? 1 : 0;
+        }
+
         // Forward pass
         embed_tokens(token_ids, SST2_SEQ_LEN, embeddings);
 
@@ -317,7 +343,8 @@ int main() {
             layer0_Wv, layer0_bv, layer0_Wo, layer0_bo,
             layer0_W1, layer0_b1, layer0_W2, layer0_b2,
             layer0_ln1_gamma, layer0_ln1_beta,
-            layer0_ln2_gamma, layer0_ln2_beta
+            layer0_ln2_gamma, layer0_ln2_beta,
+            attention_mask
         );
 
         transformer_encoder_layer(
@@ -326,7 +353,8 @@ int main() {
             layer1_Wv, layer1_bv, layer1_Wo, layer1_bo,
             layer1_W1, layer1_b1, layer1_W2, layer1_b2,
             layer1_ln1_gamma, layer1_ln1_beta,
-            layer1_ln2_gamma, layer1_ln2_beta
+            layer1_ln2_gamma, layer1_ln2_beta,
+            attention_mask
         );
 
         float probs[NUM_LABELS];

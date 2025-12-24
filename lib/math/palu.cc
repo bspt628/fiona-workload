@@ -29,14 +29,68 @@ void tiled_dotprod(elem_t *retval, const elem_t *vec1, const elem_t *vec2, size_
     }
 }
 
+// Temporary aligned buffers for MVM tile operations
+static elem_t mvm_tile_mat[32 * 32] __attribute__((aligned(64)));
+static elem_t mvm_tile_vec[32] __attribute__((aligned(64)));
+static elem_t mvm_tile_out[32] __attribute__((aligned(64)));
+
+// Helper: execute single tile MVM using MVM instruction
+static void fit_mvm_tile(elem_t *out, const elem_t *tile_mat, const elem_t *tile_vec, size_t tile_size) {
+    SET_VLEN(tile_size);
+    SET_MAT(tile_mat);      // Load matrix (tile_size x tile_size), stride=1 by default
+    LOAD_V(1, tile_vec);    // Load input vector
+    MVM(0, 1);              // Execute MVM -> calls Python mvm() once
+    STORE_V(0, out);        // Store result
+}
+
 void tiled_mvm(elem_t *retval, const elem_t *mat, const elem_t *vec, size_t rows, size_t cols) {
     if(retval == nullptr) {
         printf("[ERROR] please allocate memory for retval before call func: tiled_mvm().\n");
         printf("[HINT] elem_t retval[rows=%d];\n", rows);
         exit(-1);
     }
+
+    // Initialize output to zero
     for(size_t i = 0; i < rows; ++i) {
-        tiled_dotprod(&retval[i], &mat[i * cols], &vec[0], cols);
+        retval[i] = 0;
+    }
+
+    const size_t TILE_SIZE = 32;  // Max MVM tile size
+
+    // Tile over output dimension (rows)
+    for(size_t row_tile = 0; row_tile < rows; row_tile += TILE_SIZE) {
+        size_t tile_rows = (row_tile + TILE_SIZE <= rows) ? TILE_SIZE : (rows - row_tile);
+
+        // Tile over input dimension (cols) - results are accumulated
+        for(size_t col_tile = 0; col_tile < cols; col_tile += TILE_SIZE) {
+            size_t tile_cols = (col_tile + TILE_SIZE <= cols) ? TILE_SIZE : (cols - col_tile);
+
+            // Determine tile size for MVM (must be square for SET_MAT)
+            size_t tile_size = (tile_rows > tile_cols) ? tile_rows : tile_cols;
+
+            // Prepare tile matrix (tile_size x tile_size, zero-padded)
+            memset(mvm_tile_mat, 0, TILE_SIZE * TILE_SIZE * sizeof(elem_t));
+            for(size_t i = 0; i < tile_rows; i++) {
+                for(size_t j = 0; j < tile_cols; j++) {
+                    mvm_tile_mat[i * tile_size + j] = mat[(row_tile + i) * cols + (col_tile + j)];
+                }
+            }
+
+            // Prepare tile vector (zero-padded)
+            memset(mvm_tile_vec, 0, TILE_SIZE * sizeof(elem_t));
+            for(size_t j = 0; j < tile_cols; j++) {
+                mvm_tile_vec[j] = vec[col_tile + j];
+            }
+
+            // Execute tile MVM
+            memset(mvm_tile_out, 0, TILE_SIZE * sizeof(elem_t));
+            fit_mvm_tile(mvm_tile_out, mvm_tile_mat, mvm_tile_vec, tile_size);
+
+            // Accumulate results
+            for(size_t i = 0; i < tile_rows; i++) {
+                retval[row_tile + i] += mvm_tile_out[i];
+            }
+        }
     }
 }
 

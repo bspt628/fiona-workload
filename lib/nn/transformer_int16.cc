@@ -1,20 +1,24 @@
 /**
  * @file transformer_int16.cc
- * @brief INT16 Transformer operations for FIONA RTL (Verilator)
+ * @brief INT16 Transformer operations for FIONA Photonic Accelerator
  *
  * IMPORTANT: Uses static aligned buffers for VLSU 64-byte alignment.
  * Maximum dimensions are limited by buffer sizes.
  *
- * NOTE: Matrix operations currently use CPU-based implementation.
- * Photonic DOTP/MVM instructions have VLSU alignment constraints that
- * require each 8-element tile to be at a 64-byte boundary. This can be
- * optimized in the future with proper data layout or CONFIG_PALU usage.
+ * Photonic MVM: Uses tiled_mvm from palu.h which calls RoCC DOTP instruction.
+ * This goes through Spike custom extension to Python (photonic_models.py).
+ * Photonic model selection via FIONA_PHOTONIC_MODEL environment variable:
+ *   - ideal: Perfect mathematical operations (default)
+ *   - mzi_realistic: Realistic MZI model with phase error, loss, crosstalk
+ *   - noisy: Simple Gaussian noise
+ *   - quantized: DAC/ADC quantization effects only
  *
  * @author FIONA Project
- * @date 2025-12-22
+ * @date 2025-12-22 (Updated 2025-12-24: Photonic MVM integration)
  */
 
 #include "transformer_int16.h"
+#include "math/palu.h"  // For tiled_mvm (photonic MVM)
 #include <string.h>
 #include <stdio.h>
 
@@ -228,43 +232,27 @@ void apply_causal_mask_int16(int16_t *out, const int16_t *in, size_t seq_len) {
 }
 
 // ============================================================
-// MVM (INT16) - CPU-based implementation
+// MVM (INT16) - Photonic implementation via tiled_mvm
 // ============================================================
-// NOTE: Photonic DOTP has alignment issues with VLSU (requires 64-byte aligned
-// addresses for each 8-element tile access). For now, we use CPU-based MVM
-// to ensure correctness. This can be optimized later with proper data layout
-// or by using the MVM instruction directly with CONFIG_PALU.
+// Uses FIONA photonic MVM via RoCC instructions -> Spike -> Python
+// Photonic model selected via FIONA_PHOTONIC_MODEL environment variable:
+//   - ideal: Perfect mathematical operations (default)
+//   - mzi_realistic: Realistic MZI model with phase error, loss, crosstalk
+//   - noisy: Simple Gaussian noise
+//   - quantized: DAC/ADC quantization effects only
 
 void photonic_mvm_tile_int16(int16_t *out, const int16_t *weight, const int16_t *input,
                              size_t out_size, size_t in_size) {
-    // CPU-based matrix-vector multiplication
-    for (size_t i = 0; i < out_size; i++) {
-        int32_t sum = 0;
-        for (size_t j = 0; j < in_size; j++) {
-            sum += (int32_t)weight[i * in_size + j] * (int32_t)input[j];
-        }
-        // Clip to int16 range
-        if (sum > QUANT_MAX) sum = QUANT_MAX;
-        if (sum < QUANT_MIN) sum = QUANT_MIN;
-        out[i] = (int16_t)sum;
-    }
+    // Use FIONA photonic MVM (same as photonic_mvm_int16)
+    tiled_mvm(out, weight, input, out_size, in_size);
 }
 
 void photonic_mvm_int16(int16_t *out, const int16_t *weight, const int16_t *input,
                         size_t out_size, size_t in_size) {
-    // CPU-based matrix-vector multiplication
-    // Note: For VLSU-compatible photonic MVM, data layout would need to be
-    // padded so each 8-element tile is at a 64-byte boundary.
-    for (size_t i = 0; i < out_size; i++) {
-        int32_t sum = 0;
-        for (size_t j = 0; j < in_size; j++) {
-            sum += (int32_t)weight[i * in_size + j] * (int32_t)input[j];
-        }
-        // Clip to int16 range
-        if (sum > QUANT_MAX) sum = QUANT_MAX;
-        if (sum < QUANT_MIN) sum = QUANT_MIN;
-        out[i] = (int16_t)sum;
-    }
+    // Use FIONA photonic MVM via RoCC instructions
+    // tiled_mvm calls DOTP which goes through Spike custom extension to Python
+    // This enables photonic model selection via FIONA_PHOTONIC_MODEL env var
+    tiled_mvm(out, weight, input, out_size, in_size);
 }
 
 void photonic_linear_int16(int16_t *out, const int16_t *weight, const int16_t *input,

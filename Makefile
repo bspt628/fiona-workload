@@ -46,7 +46,6 @@ applications = \
 	elm_iris		\
 	test_relu		\
 	test_transformer_int16	\
-	sentiment_classifier	\
 	sentiment_benchmark	\
 	sentiment_benchmark_photonic	\
 	test_fp_simple	\

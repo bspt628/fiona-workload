@@ -87,6 +87,9 @@ static int16_t attn_proj_q[MAX_SEQ_LEN * D_MODEL] __attribute__((aligned(64)));
 static int16_t ffn_hidden_q[MAX_SEQ_LEN * D_FF] __attribute__((aligned(64)));
 static int16_t ffn_out_q[MAX_SEQ_LEN * D_MODEL] __attribute__((aligned(64)));
 
+// Attention mask (1 = valid, 0 = padding)
+static int attention_mask[MAX_SEQ_LEN];
+
 // Quantized weight buffers for layers
 static int16_t layer0_Wq_q[D_MODEL * D_MODEL] __attribute__((aligned(64)));
 static int16_t layer0_Wk_q[D_MODEL * D_MODEL] __attribute__((aligned(64)));
@@ -263,7 +266,8 @@ void multihead_attention_photonic(
     const int16_t* Wk, const float* bk,
     const int16_t* Wv, const float* bv,
     const int16_t* Wo, const float* bo,
-    float input_scale  // Scale of input tensor
+    float input_scale,  // Scale of input tensor
+    const int* attn_mask  // Attention mask (1 = valid, 0 = padding)
 ) {
     // QKV projections: input (input_scale) * weight (qkv_scale) -> output (qkv_scale)
     // Note: weights are quantized with qkv_scale for QKV projections
@@ -288,9 +292,16 @@ void multihead_attention_photonic(
                     score += dequant_s(Q_q[q_idx], SCALES.qkv_scale) *
                              dequant_s(K_q[k_idx], SCALES.qkv_scale);
                 }
+                score *= scale_qk;
+
+                // Apply attention mask: set padding positions to -inf
+                if (attn_mask != NULL && attn_mask[j] == 0) {
+                    score = -10000.0f;
+                }
+
                 // Store with a temporary scale before softmax
                 attn_scores_q[h * seq_len * seq_len + i * seq_len + j] =
-                    quant_s(score * scale_qk, SCALES.output_scale);
+                    quant_s(score, SCALES.output_scale);
             }
             // Softmax: input (output_scale) -> output (softmax_scale for [0,1] precision)
             softmax_row_scaled(&attn_scores_q[h * seq_len * seq_len + i * seq_len],
@@ -362,39 +373,40 @@ void transformer_encoder_layer_photonic(
     const int16_t* W2, const float* b2,
     const float* ln1_gamma, const float* ln1_beta,
     const float* ln2_gamma, const float* ln2_beta,
-    float input_scale  // Scale of input tensor
+    float input_scale,  // Scale of input tensor
+    const int* attn_mask  // Attention mask
 ) {
-    // LayerNorm1: input -> normed (output_scale for attention input)
-    layer_norm_2d_scaled(normed_q, input, ln1_gamma, ln1_beta,
-                         seq_len, D_MODEL, input_scale, SCALES.output_scale);
-
-    // Multi-head attention: normed -> attn_proj (output_scale)
-    multihead_attention_photonic(attn_proj_q, normed_q, seq_len,
+    // Post-LN (BERT style, norm_first=False)
+    // 1. Self-attention + residual + LayerNorm
+    multihead_attention_photonic(attn_proj_q, input, seq_len,
                                  Wq, bq, Wk, bk, Wv, bv, Wo, bo,
-                                 SCALES.output_scale);
+                                 input_scale, attn_mask);
 
-    // Residual connection: input (input_scale) + attn_proj (output_scale)
-    // Both need to be in the same scale for addition
+    // Residual connection: input + attn_proj
     for (int i = 0; i < seq_len * D_MODEL; i++) {
         float in_val = dequant_s(input[i], input_scale);
         float attn_val = dequant_s(attn_proj_q[i], SCALES.output_scale);
         temp_q[i] = quant_s(in_val + attn_val, SCALES.output_scale);
     }
 
-    // LayerNorm2: temp -> normed (output_scale for FFN input)
-    layer_norm_2d_scaled(normed_q, temp_q, ln2_gamma, ln2_beta,
+    // LayerNorm1 (after attention + residual)
+    layer_norm_2d_scaled(normed_q, temp_q, ln1_gamma, ln1_beta,
                          seq_len, D_MODEL, SCALES.output_scale, SCALES.output_scale);
 
-    // FFN: normed -> ffn_out (output_scale)
+    // 2. FFN + residual + LayerNorm
     feed_forward_photonic(ffn_out_q, normed_q, seq_len, W1, b1, W2, b2,
                           SCALES.output_scale);
 
-    // Residual connection: temp (output_scale) + ffn_out (output_scale)
+    // Residual connection: normed + ffn_out
     for (int i = 0; i < seq_len * D_MODEL; i++) {
-        float temp_val = dequant_s(temp_q[i], SCALES.output_scale);
+        float normed_val = dequant_s(normed_q[i], SCALES.output_scale);
         float ffn_val = dequant_s(ffn_out_q[i], SCALES.output_scale);
-        output[i] = quant_s(temp_val + ffn_val, SCALES.output_scale);
+        temp_q[i] = quant_s(normed_val + ffn_val, SCALES.output_scale);
     }
+
+    // LayerNorm2 (after FFN + residual)
+    layer_norm_2d_scaled(output, temp_q, ln2_gamma, ln2_beta,
+                         seq_len, D_MODEL, SCALES.output_scale, SCALES.output_scale);
 }
 
 // ============================================================
@@ -402,14 +414,41 @@ void transformer_encoder_layer_photonic(
 // ============================================================
 
 void embed_tokens_q(const int* token_ids, int seq_len, int16_t* output) {
+    // BERT embedding: token + position + token_type (all zeros) + LayerNorm
+    float temp_emb[MAX_SEQ_LEN * D_MODEL];
+
     for (int i = 0; i < seq_len; i++) {
         int token_id = token_ids[i];
         if (token_id < 0 || token_id >= MODEL_VOCAB_SIZE) token_id = 100;
 
         for (int j = 0; j < D_MODEL; j++) {
-            float emb = token_embedding[token_id * D_MODEL + j] +
-                        position_embedding[i * D_MODEL + j];
-            output[i * D_MODEL + j] = quant_s(emb, SCALES.embed_scale);
+            temp_emb[i * D_MODEL + j] =
+                token_embedding[token_id * D_MODEL + j] +
+                position_embedding[i * D_MODEL + j] +
+                token_type_embedding[j];  // token_type=0 for all tokens
+        }
+    }
+
+    // Apply embedding LayerNorm (BERT-specific)
+    for (int i = 0; i < seq_len; i++) {
+        float mean = 0.0f;
+        for (int j = 0; j < D_MODEL; j++) {
+            mean += temp_emb[i * D_MODEL + j];
+        }
+        mean /= D_MODEL;
+
+        float var = 0.0f;
+        for (int j = 0; j < D_MODEL; j++) {
+            float diff = temp_emb[i * D_MODEL + j] - mean;
+            var += diff * diff;
+        }
+        var /= D_MODEL;
+
+        float inv_std = 1.0f / sqrtf(var + 1e-12f);
+        for (int j = 0; j < D_MODEL; j++) {
+            float normed = (temp_emb[i * D_MODEL + j] - mean) * inv_std;
+            float result = normed * embedding_ln_gamma[j] + embedding_ln_beta[j];
+            output[i * D_MODEL + j] = quant_s(result, SCALES.embed_scale);
         }
     }
 }
@@ -625,21 +664,16 @@ int main() {
     int true_pos = 0, true_neg = 0;
     int false_pos = 0, false_neg = 0;
 
-    int report_interval = 10;
-    if (SST2_NUM_SAMPLES < 100) report_interval = 1;
-
     for (int t = 0; t < SST2_NUM_SAMPLES; t++) {
-        if (t % report_interval == 0) {
-            float pct = 100.0f * t / SST2_NUM_SAMPLES;
-            float acc_so_far = (t > 0) ? 100.0f * correct / t : 0.0f;
-            printf("  [%4d/%4d] %.1f%% | Acc so far: %.2f%% | Correct: %d\n",
-                   t, SST2_NUM_SAMPLES, pct, acc_so_far, correct);
-        }
-
         // Get token IDs
         int token_ids[MAX_SEQ_LEN];
         for (int i = 0; i < SST2_SEQ_LEN && i < MAX_SEQ_LEN; i++) {
             token_ids[i] = sst2_token_ids[t][i];
+        }
+
+        // Generate attention mask (1 = valid, 0 = padding)
+        for (int i = 0; i < SST2_SEQ_LEN; i++) {
+            attention_mask[i] = (token_ids[i] != 0) ? 1 : 0;
         }
 
         // Embedding: output scale = embed_scale
@@ -659,7 +693,8 @@ int main() {
             layer0_W1_q, layer0_b1, layer0_W2_q, layer0_b2,
             layer0_ln1_gamma, layer0_ln1_beta,
             layer0_ln2_gamma, layer0_ln2_beta,
-            SCALES.embed_scale  // Input from embedding
+            SCALES.embed_scale,  // Input from embedding
+            attention_mask
         );
 
         if (t == 0) {
@@ -675,7 +710,8 @@ int main() {
             layer1_W1_q, layer1_b1, layer1_W2_q, layer1_b2,
             layer1_ln1_gamma, layer1_ln1_beta,
             layer1_ln2_gamma, layer1_ln2_beta,
-            SCALES.output_scale  // Input from layer 0
+            SCALES.output_scale,  // Input from layer 0
+            attention_mask
         );
 
         if (t == 0) {
@@ -696,6 +732,14 @@ int main() {
             if (pred == 1) false_pos++;
             else false_neg++;
         }
+
+        // 各サンプル処理後にログ出力
+        float acc_now = 100.0f * correct / (t + 1);
+        printf("  [%4d/%4d] pred=%d label=%d %s | Acc: %.2f%% (%d/%d)\n",
+               t + 1, SST2_NUM_SAMPLES,
+               pred, label,
+               (pred == label) ? "OK" : "NG",
+               acc_now, correct, t + 1);
     }
 
     // Calculate metrics

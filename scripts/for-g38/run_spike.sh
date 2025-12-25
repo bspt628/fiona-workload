@@ -10,14 +10,13 @@
 
 APP_NAME=${1:-sentiment_benchmark}
 
-# Calculate FIONA_ROOT from submit directory (scripts/for-g38 -> fiona-workload -> fiona_undergraduate)
-# SLURM_SUBMIT_DIR is the directory where sbatch was executed
-FIONA_ROOT="$(cd "${SLURM_SUBMIT_DIR}/../../.." && pwd)"
+# Source g38-specific environment setup
+source "${SLURM_SUBMIT_DIR}/setup-env-g38.sh"
 
-PK_PATH=${FIONA_ROOT}/chipyard/toolchains/riscv-tools/riscv-pk/build/pk
-ELF_PATH=${FIONA_ROOT}/fiona-workload/build/${APP_NAME}.elf
+# Paths (FIONA_ROOT is set by setup-env-g38.sh)
+PK_PATH="${RISCV}/riscv64-unknown-elf/bin/pk"
+ELF_PATH="${FIONA_ROOT}/fiona-workload/build/${APP_NAME}.elf"
 
-source ${FIONA_ROOT}/setup-env.sh
 cd ${FIONA_ROOT}/fiona-spikesim
 
 echo "=== FIONA Spike Simulation ==="

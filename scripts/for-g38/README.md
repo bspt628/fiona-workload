@@ -2,10 +2,20 @@
 
 g38クラスタでFIONA-WORKLOADを実行するためのSlurmジョブスクリプト。
 
+## ファイル構成
+
+| ファイル | 説明 |
+|---------|------|
+| `run_spike.sh` | Spikeシミュレーション用ジョブスクリプト |
+| `setup-env-g38.sh` | g38用環境設定スクリプト |
+| `README.md` | このファイル |
+
 ## 前提条件
 
 - g38にSSHログイン済み
 - `module load slurm/20.02.5` 実行済み（または~/.bashrcに設定済み）
+- conda環境 `fiona-undergraduate` がセットアップ済み
+- `$HOME/riscv` にRISCVツールチェーンがインストール済み
 
 ## 使い方
 

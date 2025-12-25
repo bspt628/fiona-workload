@@ -8,9 +8,12 @@
 # Usage: sbatch run_spike.sh <app_name>
 # Example: sbatch run_spike.sh benchmark_transformer
 
-APP_NAME=${1:-benchmark_transformer}
+APP_NAME=${1:-sentiment_benchmark}
 
-FIONA_ROOT=/home/bspt628/fiona_undergraduate
+# Calculate FIONA_ROOT from submit directory (scripts/for-g38 -> fiona-workload -> fiona_undergraduate)
+# SLURM_SUBMIT_DIR is the directory where sbatch was executed
+FIONA_ROOT="$(cd "${SLURM_SUBMIT_DIR}/../../.." && pwd)"
+
 PK_PATH=${FIONA_ROOT}/chipyard/toolchains/riscv-tools/riscv-pk/build/pk
 ELF_PATH=${FIONA_ROOT}/fiona-workload/build/${APP_NAME}.elf
 
